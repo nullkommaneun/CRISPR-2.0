@@ -1,13 +1,19 @@
 name: Deploy to GitHub Pages
 
 on:
+  # Startet automatisch bei Änderungen im main Branch
   push:
     branches: [ main ]
+  # ZUSATZ: Erlaubt dir, den Workflow per Klick manuell zu starten!
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+
+# ... (der Rest bleibt gleich) ...
+
 
 jobs:
   build:
