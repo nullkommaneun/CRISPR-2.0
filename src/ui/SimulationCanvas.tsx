@@ -1,76 +1,108 @@
 import React, { useEffect, useRef } from 'react';
 import * as PIXI from 'pixi.js';
 import { Cell } from '../core/Cell';
+import { Food } from '../core/Food';
 import { log } from '../utils/logger';
 
 export const SimulationCanvas: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
     const cellsRef = useRef<Cell[]>([]);
+    const foodRef = useRef<Food[]>([]); // Unser Speisekammer-Speicher
 
     useEffect(() => {
-        // Verhindert doppeltes Initialisieren (React Strict Mode Problem)
         if (appRef.current) return;
 
         const initSim = async () => {
             if (!containerRef.current) return;
-
             const width = containerRef.current.clientWidth;
             const height = containerRef.current.clientHeight;
 
-            // 1. Pixi App erstellen
             const app = new PIXI.Application();
             await app.init({ 
-                width, 
-                height, 
-                backgroundColor: 0x1a1a1a,
-                resizeTo: containerRef.current 
+                width, height, backgroundColor: 0x111111, resizeTo: containerRef.current 
             });
-            
             containerRef.current.appendChild(app.canvas);
             appRef.current = app;
 
-            log(`Engine started. Canvas: ${width}x${height}`, "system");
-
-            // 2. Test-Zellen spawnen
-            for (let i = 0; i < 50; i++) {
-                cellsRef.current.push(
-                    new Cell(`c-${i}`, Math.random() * width, Math.random() * height)
-                );
+            // Init: 20 Zellen, 40 Essen
+            for (let i = 0; i < 20; i++) {
+                cellsRef.current.push(new Cell(`c-${i}`, Math.random() * width, Math.random() * height));
             }
-            log(`${cellsRef.current.length} Cells spawned`, "info");
+            for (let i = 0; i < 40; i++) {
+                foodRef.current.push(new Food(width, height));
+            }
+            
+            log("EcoSystem v2 initialized. Food added.", "system");
 
-            // 3. Ein Grafik-Objekt für alle Zellen (schneller als viele Sprites)
             const graphics = new PIXI.Graphics();
             app.stage.addChild(graphics);
 
-            // 4. Der Game Loop (läuft 60x pro Sekunde)
+            // --- GAME LOOP ---
             app.ticker.add((ticker) => {
-                const dt = ticker.deltaTime; // Zeit seit letztem Frame
+                const dt = ticker.deltaTime;
+                const w = app.screen.width;
+                const h = app.screen.height;
                 
-                // Bildschirm leeren für neuen Frame
                 graphics.clear();
 
-                // Alle Zellen updaten und zeichnen
-                cellsRef.current.forEach(cell => {
-                    // Logik Update
-                    cell.update(dt, { width: app.screen.width, height: app.screen.height });
-
-                    // Zeichnen
-                    graphics.circle(cell.x, cell.y, cell.radius);
-                    graphics.fill(cell.color);
+                // 1. Essen zeichnen
+                graphics.fillStyle = 0x00ffff; // Cyan für Nahrung (besser sichtbar)
+                foodRef.current.forEach(f => {
+                    graphics.circle(f.x, f.y, f.radius);
+                    graphics.fill();
                 });
+
+                // 2. Zellen Logik & Zeichnen
+                // Wir iterieren rückwärts, falls wir Zellen löschen müssten (bei Tod)
+                for (let i = cellsRef.current.length - 1; i >= 0; i--) {
+                    const cell = cellsRef.current[i];
+                    
+                    // Zelle denkt und bewegt sich (sieht das Essen)
+                    cell.update(dt, { width: w, height: h }, foodRef.current);
+
+                    // Kollision mit Essen checken
+                    for (let j = foodRef.current.length - 1; j >= 0; j--) {
+                        const food = foodRef.current[j];
+                        const dx = cell.x - food.x;
+                        const dy = cell.y - food.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+
+                        if (dist < cell.radius + food.radius) {
+                            // MAMPF!
+                            cell.energy += food.energy;
+                            // Essen entfernen
+                            foodRef.current.splice(j, 1);
+                            // Neues Essen woanders spawnen (damit es nicht leer wird)
+                            foodRef.current.push(new Food(w, h));
+                        }
+                    }
+
+                    // Visualisierung: Wenn viel Energie -> Zelle dicker
+                    const visualRadius = cell.radius + (cell.energy / 50); 
+                    
+                    graphics.beginPath(); // Wichtig für sauberes Zeichnen
+                    graphics.circle(cell.x, cell.y, visualRadius);
+                    graphics.fillStyle = cell.color;
+                    graphics.fill();
+                    
+                    // Kleiner Indikator für Blickrichtung
+                    graphics.beginPath();
+                    graphics.moveTo(cell.x, cell.y);
+                    graphics.lineTo(
+                        cell.x + Math.cos(cell.angle) * (visualRadius + 5),
+                        cell.y + Math.sin(cell.angle) * (visualRadius + 5)
+                    );
+                    graphics.strokeStyle = 0xffffff;
+                    graphics.stroke();
+                }
             });
         };
 
         initSim();
-
-        // Cleanup beim Verlassen
         return () => {
-            if (appRef.current) {
-                appRef.current.destroy(true, { children: true });
-                appRef.current = null;
-            }
+            if(appRef.current) appRef.current.destroy(true, {children: true});
+            appRef.current = null;
         };
     }, []);
 
