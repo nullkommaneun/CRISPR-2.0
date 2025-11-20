@@ -1,10 +1,8 @@
 name: Deploy to GitHub Pages
 
 on:
-  # Startet automatisch bei Änderungen im main Branch
   push:
     branches: [ main ]
-  # ZUSATZ: Erlaubt dir, den Workflow per Klick manuell zu starten!
   workflow_dispatch:
 
 permissions:
@@ -12,31 +10,25 @@ permissions:
   pages: write
   id-token: write
 
-# ... (der Rest bleibt gleich) ...
-
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
-          
+
       - name: Install dependencies
-        run: npm ci
-        
+        run: npm install
+
       - name: Build
         run: npm run build
-        
-      - name: Setup Pages
-        uses: actions/configure-pages@v3
-        
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -52,3 +44,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+ 
