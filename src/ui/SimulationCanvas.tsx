@@ -8,7 +8,10 @@ export const SimulationCanvas: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
     const cellsRef = useRef<Cell[]>([]);
-    const foodRef = useRef<Food[]>([]); // Unser Speisekammer-Speicher
+    const foodRef = useRef<Food[]>([]);
+    
+    // Zähler für IDs
+    const idCounter = useRef(0);
 
     useEffect(() => {
         if (appRef.current) return;
@@ -25,76 +28,102 @@ export const SimulationCanvas: React.FC = () => {
             containerRef.current.appendChild(app.canvas);
             appRef.current = app;
 
-            // Init: 20 Zellen, 40 Essen
+            // Initiale Population
             for (let i = 0; i < 20; i++) {
-                cellsRef.current.push(new Cell(`c-${i}`, Math.random() * width, Math.random() * height));
+                cellsRef.current.push(new Cell(`gen0-${i}`, Math.random() * width, Math.random() * height));
             }
-            for (let i = 0; i < 40; i++) {
+            // Viel Essen am Anfang
+            for (let i = 0; i < 60; i++) {
                 foodRef.current.push(new Food(width, height));
             }
             
-            log("EcoSystem v2 initialized. Food added.", "system");
+            log("Evolution started.", "system");
 
             const graphics = new PIXI.Graphics();
             app.stage.addChild(graphics);
 
-            // --- GAME LOOP ---
             app.ticker.add((ticker) => {
                 const dt = ticker.deltaTime;
                 const w = app.screen.width;
                 const h = app.screen.height;
                 
+                // Essen nachfüllen, wenn zu wenig da ist (Simulation am Laufen halten)
+                if (foodRef.current.length < 20 && Math.random() < 0.05) {
+                     foodRef.current.push(new Food(w, h));
+                }
+
                 graphics.clear();
 
-                // 1. Essen zeichnen
-                graphics.fillStyle = 0x00ffff; // Cyan für Nahrung (besser sichtbar)
+                // Essen zeichnen
+                graphics.fillStyle = 0x00ffff; 
                 foodRef.current.forEach(f => {
                     graphics.circle(f.x, f.y, f.radius);
                     graphics.fill();
                 });
 
-                // 2. Zellen Logik & Zeichnen
-                // Wir iterieren rückwärts, falls wir Zellen löschen müssten (bei Tod)
+                // --- EVOLUTION LOOP ---
+                // Rückwärts iterieren ist wichtig beim Löschen/Hinzufügen während des Loops
                 for (let i = cellsRef.current.length - 1; i >= 0; i--) {
                     const cell = cellsRef.current[i];
                     
-                    // Zelle denkt und bewegt sich (sieht das Essen)
+                    // 1. Update
                     cell.update(dt, { width: w, height: h }, foodRef.current);
 
-                    // Kollision mit Essen checken
+                    // 2. Kollision (Fressen)
                     for (let j = foodRef.current.length - 1; j >= 0; j--) {
                         const food = foodRef.current[j];
                         const dx = cell.x - food.x;
                         const dy = cell.y - food.y;
-                        const dist = Math.sqrt(dx*dx + dy*dy);
-
-                        if (dist < cell.radius + food.radius) {
-                            // MAMPF!
+                        
+                        // Optimierte Distanzrechnung (Quadrat) für Performance
+                        if (dx*dx + dy*dy < (cell.radius + food.radius) ** 2) {
                             cell.energy += food.energy;
-                            // Essen entfernen
                             foodRef.current.splice(j, 1);
-                            // Neues Essen woanders spawnen (damit es nicht leer wird)
-                            foodRef.current.push(new Food(w, h));
                         }
                     }
 
-                    // Visualisierung: Wenn viel Energie -> Zelle dicker
-                    const visualRadius = cell.radius + (cell.energy / 50); 
+                    // 3. TOD (Natural Selection)
+                    if (cell.energy <= 0) {
+                        // Zelle stirbt
+                        cellsRef.current.splice(i, 1);
+                        // Optional: Leiche wird zu Essen (Kannst du später einbauen)
+                        continue; // Nächste Iteration
+                    }
+
+                    // 4. GEBURT (Reproduction)
+                    if (cell.energy > 200) {
+                        idCounter.current++;
+                        // Kind erzeugen (vermutlich neben dem Elternteil)
+                        const child = cell.reproduce(`gen-${idCounter.current}`);
+                        cellsRef.current.push(child);
+                        log(`New Life! Total: ${cellsRef.current.length}`, "info");
+                    }
+
+                    // 5. Zeichnen
+                    const visualRadius = Math.max(2, cell.radius + (cell.energy / 50)); 
                     
-                    graphics.beginPath(); // Wichtig für sauberes Zeichnen
+                    graphics.beginPath();
                     graphics.circle(cell.x, cell.y, visualRadius);
                     graphics.fillStyle = cell.color;
                     graphics.fill();
                     
-                    // Kleiner Indikator für Blickrichtung
+                    // Kleines Auge (zeigt Richtung)
                     graphics.beginPath();
                     graphics.moveTo(cell.x, cell.y);
                     graphics.lineTo(
-                        cell.x + Math.cos(cell.angle) * (visualRadius + 5),
-                        cell.y + Math.sin(cell.angle) * (visualRadius + 5)
+                        cell.x + Math.cos(cell.angle) * (visualRadius + 8),
+                        cell.y + Math.sin(cell.angle) * (visualRadius + 8)
                     );
-                    graphics.strokeStyle = 0xffffff;
+                    graphics.strokeStyle = 0x000000;
                     graphics.stroke();
+                }
+
+                // Extinction Event Prevention (Wenn alle sterben, neue Adam & Eva spawnen)
+                if (cellsRef.current.length === 0) {
+                    log("Extinction Event! Reseeding...", "warn");
+                    for (let k = 0; k < 5; k++) {
+                        cellsRef.current.push(new Cell(`reseed-${Math.random()}`, Math.random() * w, Math.random() * h));
+                    }
                 }
             });
         };
