@@ -13,8 +13,9 @@ export class Cell {
     color: number;
     genome: Genome;
     brain: Brain;
+    age: number; // Neu: Um den Puls zu berechnen
 
-    constructor(id: string, x: number, y: number) {
+    constructor(id: string, x: number, y: number, genome?: Genome) {
         this.id = id;
         this.x = x;
         this.y = y;
@@ -22,29 +23,59 @@ export class Cell {
         this.velocity = 0;
         this.maxSpeed = 3.0;
         this.radius = 5;
-        this.energy = 100; // Startenergie
+        this.energy = 100;
+        this.age = 0;
 
-        // Inputs: [Bias, Winkel_zu_Futter, Distanz_zu_Futter]
-        // Outputs: [Schub, Lenkung]
-        this.brain = new Brain(3, 2);
-        this.genome = new Genome(3, 2);
+        // INPUTS: 4 [Bias, Winkel, Distanz, Puls(Zeit)]
+        // OUTPUTS: 2 [Schub, Lenkung]
+        this.brain = new Brain(4, 2);
         
-        // Farbe basierend auf Genen
-        const r = Math.floor(((this.genome.weights[0] + 1) / 2) * 255);
-        const g = Math.floor(((this.genome.weights[1] + 1) / 2) * 255);
-        this.color = (r << 16) + (g << 8) + 50;
+        if (genome) {
+            this.genome = genome;
+        } else {
+            this.genome = new Genome(4, 2);
+        }
+        
+        this.updateColor();
+    }
+
+    updateColor() {
+        // Visualisiert die ersten 3 Gewichte als RGB
+        // So sehen verwandte Zellen ähnlich aus
+        const r = Math.floor(((Math.tanh(this.genome.weights[0]) + 1) / 2) * 255);
+        const g = Math.floor(((Math.tanh(this.genome.weights[1]) + 1) / 2) * 255);
+        const b = Math.floor(((Math.tanh(this.genome.weights[2]) + 1) / 2) * 255);
+        this.color = (r << 16) + (g << 8) + b;
+    }
+
+    // Die Zell-Teilung
+    reproduce(newId: string): Cell {
+        // Kind bekommt Kopie des Genoms
+        const childGenome = this.genome.clone();
+        // Mutation! Rate: 10%, Stärke: 0.3
+        childGenome.mutate(0.1, 0.3);
+        
+        const child = new Cell(newId, this.x, this.y, childGenome);
+        
+        // Energie-Transfer: Elternteil gibt 50% ab
+        child.energy = this.energy / 2;
+        this.energy = this.energy / 2;
+
+        return child;
     }
 
     update(dt: number, bounds: { width: number, height: number }, foods: Food[]) {
-        // 1. SENSORIK: Wo ist das nächste Essen?
+        this.age += dt;
+
+        // 1. SENSORIK
         let nearestDist = Infinity;
         let nearestFood: Food | null = null;
 
-        // Simpler Loop durch alles Essen (für 50 Stück ok)
+        // Suche optimieren: Nur checken, was halbwegs nah ist (simple Box-Check wäre noch schneller)
         for (const food of foods) {
             const dx = food.x - this.x;
             const dy = food.y - this.y;
-            const d2 = dx*dx + dy*dy; // Distanz im Quadrat (schneller)
+            const d2 = dx*dx + dy*dy;
             if (d2 < nearestDist) {
                 nearestDist = d2;
                 nearestFood = food;
@@ -52,30 +83,31 @@ export class Cell {
         }
 
         let inputAngle = 0;
-        let inputDist = 1; // 1 = weit weg/nichts gesehen
+        let inputDist = 1;
 
         if (nearestFood) {
-            // Winkel zum Essen berechnen
             const dx = nearestFood.x - this.x;
             const dy = nearestFood.y - this.y;
             const targetAngle = Math.atan2(dy, dx);
-            
-            // Relativer Winkel (Wo ist Essen im Vergleich zu meiner Blickrichtung?)
             let relativeAngle = targetAngle - this.angle;
-            
-            // Normalisieren auf -PI bis PI
             while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
             while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
-
-            inputAngle = relativeAngle / Math.PI; // Skaliert auf -1 bis 1
-            inputDist = Math.sqrt(nearestDist) / Math.max(bounds.width, bounds.height); // 0 bis 1
+            inputAngle = relativeAngle / Math.PI; 
+            
+            // Distanz normalisieren (0 = nah, 1 = fern)
+            // Wir begrenzen die Sichtweite auf 200px für realistischeres Verhalten
+            inputDist = Math.min(Math.sqrt(nearestDist), 200) / 200;
         }
+
+        // Der "Anti-Loop" Puls: Ein Sinus-Wert, der sich langsam ändert
+        const pulse = Math.sin(this.age * 0.1);
 
         // 2. DENKEN
         const inputs = [
             1.0,        // Bias
-            inputAngle, // Sensor 1: Wo ist es?
-            inputDist   // Sensor 2: Wie weit?
+            inputAngle, // Wo ist Essen?
+            inputDist,  // Wie weit? (1 = weit weg)
+            pulse       // Zeitgefühl (verhindert statisches Drehen)
         ];
 
         const outputs = this.brain.compute(inputs, this.genome);
@@ -83,24 +115,22 @@ export class Cell {
         const turn = outputs[1];   
 
         // 3. PHYSIK
-        this.angle += turn * 0.3 * dt; // Drehgeschwindigkeit
-        this.velocity += thrust * 0.5 * dt;
+        this.angle += turn * 0.4 * dt; // Agileres Drehen
+        this.velocity += thrust * 0.8 * dt; // Schnelleres Beschleunigen
         
-        this.velocity *= 0.9; // Starke Reibung verhindert unendliches Gleiten
+        this.velocity *= 0.9; 
         if (this.velocity > this.maxSpeed) this.velocity = this.maxSpeed;
-        if (this.velocity < 0) this.velocity = 0; // Kein Rückwärtsgang
+        if (this.velocity < 0) this.velocity = 0; 
 
         this.x += Math.cos(this.angle) * this.velocity * dt;
         this.y += Math.sin(this.angle) * this.velocity * dt;
 
-        // Wrap-Around
         if (this.x < 0) this.x = bounds.width;
         if (this.x > bounds.width) this.x = 0;
         if (this.y < 0) this.y = bounds.height;
         if (this.y > bounds.height) this.y = 0;
 
-        // Energieverbrauch (Bewegung kostet Kraft!)
-        const metabolicRate = 0.05;
-        this.energy -= (metabolicRate + Math.abs(thrust) * 0.05) * dt;
+        // Energieverbrauch: Grundumsatz + Bewegungskosten + Gehirn-Anstrengung
+        this.energy -= (0.03 + Math.abs(thrust) * 0.05) * dt;
     }
 }
